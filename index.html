@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      html, body {
+        padding: 0;
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        text-align: center;
+      }
+      body {
+        padding-top: 25vh;
+      }
+      body.rendering {
+        padding-top: 0;
+      }
+      .msg {
+        display: none;
+      }
+      body.loading .msg {
+        display: block;
+      }
+      form {
+        display: inline-block;
+        padding: 1vw 5vw;
+        border: solid 1px #eee;
+        border-radius: 1vw;
+      }
+      form div {
+        margin-bottom: 3vw;
+      }
+      body.loading form,
+      body.rendering form {
+        display: none;
+      }
+      canvas {
+        display: none;
+      }
+      body.rendering canvas {
+        display: block;
+      }
+      #status1 {
+        font-size: 150%;
+        font-weight: bold;
+      }
+      #branding {
+        position: absolute;
+        top: 16px;
+        right: 16px;
+        text-align: right;
+      }
+      input[type='button'] {
+        padding: 8px 64px;
+        margin-top: 3vw;
+      }
+    </style>
+  </head>
+  <body class='loading'>
+    <div id='branding'>
+      <img src='http://ifcopenshell.org/static/ifcopenshell_logo.png' height='64' width='auto'>
+      <img src='https://upload.wikimedia.org/wikipedia/commons/1/1f/WebAssembly_Logo.svg' height='64' width='auto'>
+      <br>
+      <b>IfcOpenShell</b> WebAssembly
+    </div>
+    <div class='msg'>
+      <div id='status1'>Loading...</div>
+      <div id='status2'></div>
+    </div>
+    <form action='#' onsubmit="return false;">
+      <div>Client-side model viewer</div>
+      <input type='file' id='fileinput'><br>
+      <input type='button' id='btn' value='Load'>
+    </form>
+    <script type="text/javascript">document.querySelector("#status2").innerHTML = "Fetching pyodide";</script>
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/pyodide/v0.22.0a1/full/pyodide.js"></script>
+    <script async src="https://unpkg.com/es-module-shims@1.3.6/dist/es-module-shims.js"></script>
+    <script type="importmap">
+      {"imports": {"three": "https://unpkg.com/three@0.141.0/build/three.module.js",
+                   "OrbitControls": "https://unpkg.com/three@0.141.0/examples/jsm/controls/OrbitControls.js"}}
+    </script>
+    <script type="module">
+      import * as THREE from 'three';
+      import { OrbitControls } from 'OrbitControls';
+      
+      THREE.Object3D.DefaultUp = new THREE.Vector3(0,0,1);
+      
+      let pyodide = null;
+
+      async function main() {
+        document.querySelector("#status2").innerHTML = "Initializing pyodide";
+        pyodide = await loadPyodide();
+        document.querySelector("#status2").innerHTML = "Loading package manager";
+        await pyodide.loadPackage("micropip");
+        const micropip = pyodide.pyimport("micropip");
+        document.querySelector("#status2").innerHTML = "Loading IfcOpenShell (this may take a while)";
+        await micropip.install("IfcOpenShell-0.7.0-py3-none-any.whl");
+        console.log(await pyodide.runPython(`
+            import ifcopenshell
+            ifcopenshell.version`));
+
+        document.body.className = ''
+        
+        document.querySelector("input[type=button]").onclick = async () => {  
+          document.body.className = 'loading'
+          document.querySelector("#status2").innerHTML = "Generating geometry";
+        
+          let file = document.querySelector("input").files[0];
+          let content = await file.text();
+          let ifcopenshell = pyodide.pyimport('ifcopenshell')
+          let ifc = ifcopenshell.file.from_string(content);
+          
+          let ifcopenshell_geom = pyodide.pyimport('ifcopenshell.geom');
+          let s = ifcopenshell_geom.settings();
+          s.set(s.WELD_VERTICES, false);
+          let it = ifcopenshell_geom.iterator(s, ifc);
+          
+          let last_mesh_id = null;
+          let geometries;
+          
+          const renderer = new THREE.WebGLRenderer();
+          renderer.setSize( window.innerWidth, window.innerHeight );
+          document.body.appendChild( renderer.domElement );
+          
+          renderer.setClearColor(0x000000, 0);
+          const scene = new THREE.Scene();
+
+          var light = new THREE.DirectionalLight(0xFFFFFF);
+          light.position.set(20, 10, 30);
+          scene.add(light);
+          var light = new THREE.DirectionalLight(0xFFFFFF, 0.8);
+          light.position.set(-10, 1, -30);
+          scene.add(light);
+          scene.add(new THREE.AmbientLight(0x404050));
+
+          const camera = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 1, 10000 );
+
+          const controls = new OrbitControls( camera, renderer.domElement );
+          
+          if (it.initialize()) {
+            while (true) {
+              let obj = it.get();
+              
+              // obj.type appears to be overwritten by pyodide, returning the typename of the C++ class?
+              let ty = ifc.by_id(obj.id).is_a()
+              if (ty !== 'IfcOpeningElement' && ty != 'IfcSpace') {
+                
+                if (last_mesh_id != obj.geometry.id) {
+                  geometries = [];
+
+                  let materials = obj.geometry.materials.toJs().map(e => new THREE.MeshLambertMaterial({
+                    color: new THREE.Color(...e.diffuse.toJs()), opacity: 1.0 - e.transparency, transparent: e.transparency > 1.e-5
+                  }));
+                  
+                  let mapping = {};
+                  obj.geometry.material_ids.toJs().forEach((i, idx) => {
+                    mapping[i] = mapping[i] || []
+                    mapping[i].push(idx);
+                  });
+                  
+                  materials.forEach((m, mi) => {
+                    let geometry = new THREE.BufferGeometry();
+                  
+                    let vs = new Float32Array(obj.geometry.verts.toJs());
+                    let ns = new Float32Array(obj.geometry.normals.toJs());
+                    let fs = obj.geometry.faces.toJs();
+                    
+                    geometry.setIndex(fs.filter((_, i) => mapping[mi].indexOf(parseInt(i / 3)) !== -1));
+                    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vs, 3));
+                    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(ns, 3));
+                    
+                    geometries.push([geometry, m]);
+                  });
+                  
+                  last_mesh_id = obj.geometry.id;
+                }
+                
+                for (let gm of geometries) {
+                  let [g, mat] = gm;
+                  let mesh = new THREE.Mesh(g, mat);
+                  
+                  var matrix = new THREE.Matrix4();
+                  const m = obj.transformation.matrix.data.toJs();
+                  matrix.set(m[0], m[1], m[2], 0, m[3], m[4], m[5], 0, m[6], m[7], m[8], 0, m[9], m[10], m[11], 1);
+                  matrix.transpose();
+                  mesh.matrixAutoUpdate = false;
+                  mesh.matrix = matrix;              
+                  
+                  scene.add(mesh);
+                }
+                
+              }
+              
+              if (!it.next()) {
+                break;
+              }
+            }
+          }
+          document.body.className = 'rendering';
+          
+          var boundingBox = new THREE.Box3();
+          boundingBox.setFromObject(scene);
+          var center = new THREE.Vector3();
+          boundingBox.getCenter(center);
+          controls.target = center;
+
+          var viewDistance = boundingBox.getSize(new THREE.Vector3()).length();
+          camera.position.copy(center.clone().add(
+              new THREE.Vector3(0.5, 0.25, 1).normalize().multiplyScalar(viewDistance)
+          ));
+          
+          camera.near = viewDistance / 100;
+          camera.far = viewDistance * 100;
+          controls.update();
+          camera.updateProjectionMatrix();
+          camera.updateMatrixWorld();
+          
+          var fovFactor = Math.tan(camera.fov / 2 / 180 * 3.141592653);
+          var outside = 0.;
+          
+          var largestAngle = 0.;
+          for (var i = 0; i < 8; i++) {
+              const v = new THREE.Vector3(
+                  i & 1 ? boundingBox.min.x : boundingBox.max.x,
+                  i & 2 ? boundingBox.min.y : boundingBox.max.y,
+                  i & 4 ? boundingBox.min.z : boundingBox.max.z
+              );
+              v.applyMatrix4(camera.matrixWorldInverse);
+              outside = Math.max(outside, Math.abs(v.x / camera.aspect) - fovFactor * -v.z, Math.abs(v.y) - fovFactor * -v.z);
+          }
+          
+          viewDistance += outside * 2;
+          
+          camera.position.copy(center.clone().add(
+              new THREE.Vector3(0.5, 0.25, 1).normalize().multiplyScalar(viewDistance)
+          ));
+
+          controls.update();
+          
+          function render() {
+            requestAnimationFrame(render);
+            renderer.render(scene, camera);
+          }
+          
+          render();
+        }
+      }
+      main();
+    </script>
+  </body>
+</html>
