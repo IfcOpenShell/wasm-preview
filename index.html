@@ -114,6 +114,13 @@
           let ifcopenshell_geom = pyodide.pyimport('ifcopenshell.geom');
           let s = ifcopenshell_geom.settings();
           s.set(s.WELD_VERTICES, false);
+          /*
+          let it = ifcopenshell_geom.iterator.callKwargs({
+            'settings': s,
+            'file_or_filename': ifc,
+            'num_threads': 8});
+            'exclude':['IfcSpace', 'IfcOpeningElement']});
+          */
           let it = ifcopenshell_geom.iterator(s, ifc);
           
           let last_mesh_id = null;
@@ -144,13 +151,16 @@
               
               // obj.type appears to be overwritten by pyodide, returning the typename of the C++ class?
               let ty = ifc.by_id(obj.id).is_a()
-              if (ty !== 'IfcOpeningElement' && ty != 'IfcSpace') {
+              if (ty !== 'IfcOpeningElement' && ty !== 'IfcSpace') {
                 
                 if (last_mesh_id != obj.geometry.id) {
                   geometries = [];
 
                   let materials = obj.geometry.materials.toJs().map(e => new THREE.MeshLambertMaterial({
-                    color: new THREE.Color(...e.diffuse.toJs()), opacity: 1.0 - e.transparency, transparent: e.transparency > 1.e-5
+                    color: new THREE.Color(...e.diffuse.toJs()),
+                    opacity: 1.0 - e.transparency,
+                    transparent: e.transparency > 1.e-5,
+                    side: THREE.DoubleSide
                   }));
                   
                   let mapping = {};
@@ -159,14 +169,24 @@
                     mapping[i].push(idx);
                   });
                   
+                  let vs = new Float32Array(obj.geometry.verts.toJs());
+                  let ns = new Float32Array(obj.geometry.normals.toJs());
+                  let fs = obj.geometry.faces.toJs();
+                  
+                  // Default material
+                  let offset = 0;
+                  if (mapping[-1]) {
+                    materials.unshift(new THREE.MeshLambertMaterial({
+                      color: new THREE.Color(0.6,0.6,0.6),
+                      side: THREE.DoubleSide
+                    }));
+                    offset = 1;
+                  }
+                  
                   materials.forEach((m, mi) => {
                     let geometry = new THREE.BufferGeometry();
                   
-                    let vs = new Float32Array(obj.geometry.verts.toJs());
-                    let ns = new Float32Array(obj.geometry.normals.toJs());
-                    let fs = obj.geometry.faces.toJs();
-                    
-                    geometry.setIndex(fs.filter((_, i) => mapping[mi].indexOf(parseInt(i / 3)) !== -1));
+                    geometry.setIndex(mapping[mi - offset].flatMap(i => [fs[3*i+0], fs[3*i+1], fs[3*i+2]]));
                     geometry.setAttribute('position', new THREE.Float32BufferAttribute(vs, 3));
                     geometry.setAttribute('normal', new THREE.Float32BufferAttribute(ns, 3));
                     
