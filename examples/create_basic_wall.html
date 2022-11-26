@@ -2,60 +2,7 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <style>
-      html, body {
-        padding: 0;
-        margin: 0;
-        width: 100%;
-        height: 100%;
-        text-align: center;
-      }
-      body {
-        padding-top: 25vh;
-      }
-      body.rendering {
-        padding-top: 0;
-      }
-      .msg {
-        display: none;
-      }
-      body.loading .msg {
-        display: block;
-      }
-      form {
-        display: inline-block;
-        padding: 1vw 5vw;
-        border: solid 1px #eee;
-        border-radius: 1vw;
-      }
-      form div {
-        margin-bottom: 3vw;
-      }
-      body.loading form,
-      body.rendering form {
-        display: none;
-      }
-      canvas {
-        display: none;
-      }
-      body.rendering canvas {
-        display: block;
-      }
-      #status1 {
-        font-size: 150%;
-        font-weight: bold;
-      }
-      #branding {
-        position: absolute;
-        top: 16px;
-        right: 16px;
-        text-align: right;
-      }
-      input[type='button'] {
-        padding: 8px 64px;
-        margin-top: 3vw;
-      }
-    </style>
+    <link rel="stylesheet" href="style.css">
   </head>
   <body class='loading'>
     <div id='branding'>
