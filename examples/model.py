@@ -43,29 +43,20 @@ class Model:
     def create_2pt_wall(self, p1, p2, elevation, height, thickness, container, wall_type=None):
         p1 = np.array([p1[0],p1[1]])
         p2 = np.array([p2[0],p2[1]])
-        def get_angle(p1, p2):
-            a = p2 - p1
-            x = np.array([1, 0])
-            inner = np.inner(a, x)
-            norms = np.linalg.norm(a) * np.linalg.norm(x)
-            cos = inner / norms
-            return np.arccos(np.clip(cos, -1.0, 1.0))
 
         wall = run("root.create_entity", self.model, ifc_class="IfcWall")
         length = float(np.linalg.norm(p2 - p1))
         representation = run("geometry.add_wall_representation", self.model, context=self.body, length=length, height=height, thickness=thickness)
-        a = get_angle(p1, p2)
-        sa = np.sin(a)
-        ca = np.cos(a)
+        v = p2 - p1
+        v = np.divide(v,float(np.linalg.norm(v)),casting='unsafe')
         matrix = np.array([
-            [ca, -sa, 0, p1[0]],
-            [sa, ca, 0, p1[1]],
+            [v[0], -v[1], 0, p1[0]],
+            [v[1], v[0], 0, p1[1]],
             [0, 0, 1, elevation],
             [0, 0, 0, 1],
         ])
         run("geometry.edit_object_placement", self.model, product=wall, matrix=matrix)
         run("geometry.assign_representation", self.model, product=wall, representation=representation)
-
         run("spatial.assign_container", self.model, relating_structure=container, product=wall)
         if wall_type:
             run("type.assign_type", self.model, related_object=wall, relating_type=wall_type)
