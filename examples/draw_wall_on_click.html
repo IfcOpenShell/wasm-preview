@@ -239,7 +239,7 @@
           function onMouseClick( event ) {
             var newPoint = getPoint(event);
             if(previousPoint != null){
-              console.log(newPoint);
+              //console.log(newPoint);
 
               let model = pyodide.globals.get('model').toJs();
               let modelObject = pyodide.globals.get('modelObject').toJs();
