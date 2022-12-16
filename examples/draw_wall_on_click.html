@@ -83,7 +83,10 @@
           const scene = new THREE.Scene();
           const camera = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 1, 10000 );
           const controls = new OrbitControls( camera, renderer.domElement );
-          
+          controls.mouseButtons  = {
+            MIDDLE: THREE.MOUSE.ROTATE,
+            RIGHT: THREE.MOUSE.PAN
+          }
           renderer.setSize( window.innerWidth, window.innerHeight );
           document.body.appendChild( renderer.domElement );
 
