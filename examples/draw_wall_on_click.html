@@ -87,6 +87,7 @@
             MIDDLE: THREE.MOUSE.ROTATE,
             RIGHT: THREE.MOUSE.PAN
           }
+          
           renderer.setSize( window.innerWidth, window.innerHeight );
           document.body.appendChild( renderer.domElement );
 
@@ -100,7 +101,66 @@
           scene.add(light);
           scene.add(new THREE.AmbientLight(0x404050));
 
-          function reloadScene(it, ifc){
+          function generateMesh(last_mesh_id, obj, geometries){
+            if (last_mesh_id != obj.geometry.id) {
+              geometries = [];
+
+              let materials = obj.geometry.materials.toJs().map(e => new THREE.MeshLambertMaterial({
+                color: new THREE.Color(...e.diffuse.toJs()),
+                opacity: 1.0 - e.transparency,
+                transparent: e.transparency > 1.e-5,
+                side: THREE.DoubleSide
+              }));
+              
+              let mapping = {};
+              obj.geometry.material_ids.toJs().forEach((i, idx) => {
+                mapping[i] = mapping[i] || []
+                mapping[i].push(idx);
+              });
+              
+              let vs = new Float32Array(obj.geometry.verts.toJs());
+              let ns = new Float32Array(obj.geometry.normals.toJs());
+              let fs = obj.geometry.faces.toJs();
+              
+              // Default material
+              let offset = 0;
+              if (mapping[-1]) {
+                materials.unshift(new THREE.MeshLambertMaterial({
+                  color: new THREE.Color(0.6,0.6,0.6),
+                  side: THREE.DoubleSide
+                }));
+                offset = 1;
+              }
+              
+              materials.forEach((m, mi) => {
+                let geometry = new THREE.BufferGeometry();
+              
+                geometry.setIndex(mapping[mi - offset].flatMap(i => [fs[3*i+0], fs[3*i+1], fs[3*i+2]]));
+                geometry.setAttribute('position', new THREE.Float32BufferAttribute(vs, 3));
+                geometry.setAttribute('normal', new THREE.Float32BufferAttribute(ns, 3));
+                
+                geometries.push([geometry, m]);
+              });
+              
+              last_mesh_id = obj.geometry.id;
+            }
+            
+            for (let gm of geometries) {
+              let [g, mat] = gm;
+              let mesh = new THREE.Mesh(g, mat);
+              
+              var matrix = new THREE.Matrix4();
+              const m = obj.transformation.matrix.data.toJs();
+              matrix.set(m[0], m[1], m[2], 0, m[3], m[4], m[5], 0, m[6], m[7], m[8], 0, m[9], m[10], m[11], 1);
+              matrix.transpose();
+              mesh.matrixAutoUpdate = false;
+              mesh.matrix = matrix;
+              
+              scene.add(mesh);
+            }
+          }
+
+          function loadScene(it, ifc){
             let last_mesh_id = null;
             let geometries;
 
@@ -112,62 +172,7 @@
                 let ty = ifc.by_id(obj.id).is_a()
                 if (ty !== 'IfcOpeningElement' && ty !== 'IfcSpace') {
                   
-                  if (last_mesh_id != obj.geometry.id) {
-                    geometries = [];
-
-                    let materials = obj.geometry.materials.toJs().map(e => new THREE.MeshLambertMaterial({
-                      color: new THREE.Color(...e.diffuse.toJs()),
-                      opacity: 1.0 - e.transparency,
-                      transparent: e.transparency > 1.e-5,
-                      side: THREE.DoubleSide
-                    }));
-                    
-                    let mapping = {};
-                    obj.geometry.material_ids.toJs().forEach((i, idx) => {
-                      mapping[i] = mapping[i] || []
-                      mapping[i].push(idx);
-                    });
-                    
-                    let vs = new Float32Array(obj.geometry.verts.toJs());
-                    let ns = new Float32Array(obj.geometry.normals.toJs());
-                    let fs = obj.geometry.faces.toJs();
-                    
-                    // Default material
-                    let offset = 0;
-                    if (mapping[-1]) {
-                      materials.unshift(new THREE.MeshLambertMaterial({
-                        color: new THREE.Color(0.6,0.6,0.6),
-                        side: THREE.DoubleSide
-                      }));
-                      offset = 1;
-                    }
-                    
-                    materials.forEach((m, mi) => {
-                      let geometry = new THREE.BufferGeometry();
-                    
-                      geometry.setIndex(mapping[mi - offset].flatMap(i => [fs[3*i+0], fs[3*i+1], fs[3*i+2]]));
-                      geometry.setAttribute('position', new THREE.Float32BufferAttribute(vs, 3));
-                      geometry.setAttribute('normal', new THREE.Float32BufferAttribute(ns, 3));
-                      
-                      geometries.push([geometry, m]);
-                    });
-                    
-                    last_mesh_id = obj.geometry.id;
-                  }
-                  
-                  for (let gm of geometries) {
-                    let [g, mat] = gm;
-                    let mesh = new THREE.Mesh(g, mat);
-                    
-                    var matrix = new THREE.Matrix4();
-                    const m = obj.transformation.matrix.data.toJs();
-                    matrix.set(m[0], m[1], m[2], 0, m[3], m[4], m[5], 0, m[6], m[7], m[8], 0, m[9], m[10], m[11], 1);
-                    matrix.transpose();
-                    mesh.matrixAutoUpdate = false;
-                    mesh.matrix = matrix;
-                    
-                    scene.add(mesh);
-                  }
+                  generateMesh(last_mesh_id, obj, geometries);
                 }
 
                 if (!it.next()) {
@@ -217,7 +222,7 @@
             controls.update();
           }
           
-          reloadScene(it, ifc);
+          loadScene(it, ifc);
 
           function render() {
             requestAnimationFrame(render);
@@ -239,6 +244,13 @@
             return raycaster.ray.intersectPlane(plane, point);
           }
 
+          function addObjToScene(obj){
+            let last_mesh_id = null;
+            let geometries;
+                        
+            generateMesh(last_mesh_id, obj, geometries);
+          }
+
           function onMouseClick( event ) {
             var newPoint = getPoint(event);
             if(previousPoint != null){
@@ -246,17 +258,16 @@
 
               let model = pyodide.globals.get('model').toJs();
               let modelObject = pyodide.globals.get('modelObject').toJs();
-              modelObject.create_2pt_wall([previousPoint.x,previousPoint.y], [newPoint.x, newPoint.y], 0, 3., 0.2, modelObject.storey)
+              let wall = modelObject.create_2pt_wall([previousPoint.x,previousPoint.y], [newPoint.x, newPoint.y], 0, 3., 0.2, modelObject.storey)
 
-              let ifc = ifcopenshell.file.from_string(model.to_string());
+              //let ifc = ifcopenshell.file.from_string(model.to_string()); // DEBUG ONLY
               //console.log(ifc.to_string());
 
               let s = ifcopenshell_geom.settings();
               s.set(s.WELD_VERTICES, false);
 
-              let it = ifcopenshell_geom.iterator(s, ifc);
-              
-              reloadScene(it, ifc);
+              let obj = ifcopenshell.geom.create_shape(s, wall)
+              addObjToScene(obj)
             }
             previousPoint = newPoint;
           }

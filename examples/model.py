@@ -61,5 +61,7 @@ class Model:
         if wall_type:
             run("type.assign_type", self.model, related_object=wall, relating_type=wall_type)
 
+        return wall
+
     def get_model(self):
         return self.model
